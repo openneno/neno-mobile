@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NENO</string>
+    <string name="widget_quick_name">快速记录</string>
+    <string name="widget_quick_desc">一键写下现在的想法</string>
+    <string name="widget_random_name">随机漫步</string>
+    <string name="widget_random_desc">在桌面与过去的笔记重逢, 点击刷新换一条</string>
+    <string name="widget_heatmap_name">记录热力图</string>
+    <string name="widget_heatmap_desc">笔记数量与最近 12 周的记录</string>
+    <string name="share_to_neno">保存到 NENO</string>
+</resources>
