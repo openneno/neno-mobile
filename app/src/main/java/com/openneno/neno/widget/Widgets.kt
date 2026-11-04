@@ -3,6 +3,7 @@ package com.openneno.neno.widget
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -254,7 +255,7 @@ class RandomNoteWidgetReceiver : GlanceAppWidgetReceiver() {
 // ---------- 记录热力图 ----------
 
 class HeatmapWidget : GlanceAppWidget() {
-    override val sizeMode = SizeMode.Responsive(setOf(DpSize(180.dp, 110.dp), DpSize(250.dp, 110.dp), DpSize(250.dp, 180.dp)))
+    override val sizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val stats = context.app.repository.stats()
@@ -265,41 +266,57 @@ class HeatmapWidget : GlanceAppWidget() {
     @Composable
     private fun Content(context: Context, c: WidgetColors, stats: NoteStats) {
         val size = LocalSize.current
-        val weeks = if (size.width >= 250.dp) HeatmapData.WEEKS else 8
-        val today = LocalDate.now()
-        val cell = ((size.width.value - 32 - (weeks - 1) * 3) / weeks).coerceIn(8f, 18f).dp
-        Column(
-            GlanceModifier.fillMaxSize().appWidgetBackground().cornerRadius(20.dp).background(c.background).padding(16.dp)
-                .clickable(open(context, MainActivity.ACTION_COMPOSE)),
-        ) {
-            Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Stat("${stats.noteCount}", "笔记", c)
-                Stat("${stats.tagCount}", "标签", c)
-                Stat("${stats.dayCount}", "天", c)
-            }
-            Spacer(GlanceModifier.height(10.dp))
-            Row(GlanceModifier.fillMaxWidth().defaultWeight(), verticalAlignment = Alignment.Bottom) {
-                HeatmapData.grid(today, weeks).forEachIndexed { i, week ->
-                    if (i > 0) Spacer(GlanceModifier.width(3.dp))
-                    Column {
-                        week.forEachIndexed { j, date ->
-                            if (j > 0) Spacer(GlanceModifier.height(3.dp))
-                            val count = stats.countByDay[date.toString()] ?: 0
-                            val future = date.isAfter(today)
-                            Box(
-                                GlanceModifier.size(cell).cornerRadius(3.dp).background(c.heat(count, future))
-                                    .then(if (!future) GlanceModifier.clickable(open(context, MainActivity.ACTION_DAY, day = date.toString())) else GlanceModifier)
-                            ) {}
-                        }
-                    }
+        val w = size.width.value
+        val h = size.height.value
+        // 宽而矮(4×2)时统计数字放在左侧, 热力图占满右侧的高度; 否则上下排列
+        val sideBySide = w / h > 1.5f
+        val padding = 16f
+        val gap = 3f
+        val gridW = w - padding * 2 - if (sideBySide) 76f else 0f
+        val gridH = h - padding * 2 - if (sideBySide) 0f else 54f
+        // 每个格子四周各有 gap/2 的边距
+        val cell = (gridH / 7 - gap).coerceIn(6f, 20f)
+        val weeks = (gridW / (cell + gap)).toInt().coerceIn(4, 20)
+
+        val modifier = GlanceModifier.fillMaxSize().appWidgetBackground().cornerRadius(20.dp).background(c.background)
+            .padding(padding.dp).clickable(open(context, MainActivity.ACTION_COMPOSE))
+        if (sideBySide) {
+            Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+                Column(GlanceModifier.width(76.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
+                    Stat("${stats.noteCount}", "笔记", c)
+                    Spacer(GlanceModifier.height(6.dp))
+                    Stat("${stats.dayCount}", "天", c)
                 }
+                Grid(context, c, stats, weeks, cell.dp, gap.dp, GlanceModifier.defaultWeight())
+            }
+        } else {
+            Column(modifier) {
+                Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(GlanceModifier.defaultWeight()) { Stat("${stats.noteCount}", "笔记", c) }
+                    Column(GlanceModifier.defaultWeight()) { Stat("${stats.tagCount}", "标签", c) }
+                    Column(GlanceModifier.defaultWeight()) { Stat("${stats.dayCount}", "天", c) }
+                }
+                Spacer(GlanceModifier.height(10.dp))
+                Grid(context, c, stats, weeks, cell.dp, gap.dp, GlanceModifier.fillMaxWidth().defaultWeight())
             }
         }
     }
 
+    /** 热力图: 每列一周, 最右一列包含今天 */
     @Composable
-    private fun androidx.glance.layout.RowScope.Stat(value: String, label: String, c: WidgetColors) {
-        Column(GlanceModifier.defaultWeight()) {
+    private fun Grid(context: Context, c: WidgetColors, stats: NoteStats, weeks: Int, cell: androidx.compose.ui.unit.Dp, gap: androidx.compose.ui.unit.Dp, modifier: GlanceModifier) {
+        // 桌面组件的视图数量有限制(每个容器最多 10 个子元素, 总数也有上限), 热力图画成一张图片
+        val bitmap = heatmapBitmap(context, stats.countByDay, weeks, cell, gap.value)
+        val width = (weeks * (cell.value + gap.value) - gap.value).dp
+        val height = (7 * (cell.value + gap.value) - gap.value).dp
+        Row(modifier, horizontalAlignment = Alignment.End, verticalAlignment = Alignment.CenterVertically) {
+            Image(ImageProvider(bitmap), "最近 $weeks 周的记录", GlanceModifier.size(width, height))
+        }
+    }
+
+    @Composable
+    private fun Stat(value: String, label: String, c: WidgetColors) {
+        Column {
             Text(value, style = TextStyle(color = c.ink, fontSize = 18.sp, fontWeight = FontWeight.Bold))
             Text(label, style = TextStyle(color = c.ink3, fontSize = 11.sp))
         }
@@ -309,6 +326,50 @@ class HeatmapWidget : GlanceAppWidget() {
 class HeatmapWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = HeatmapWidget()
 }
+
+/**
+ * 热力图图片. 颜色使用半透明的灰色和主题色, 在浅色和深色背景上都清晰.
+ */
+private fun heatmapBitmap(context: Context, counts: Map<String, Int>, weeks: Int, cell: androidx.compose.ui.unit.Dp, gapDp: Float): android.graphics.Bitmap {
+    val density = context.resources.displayMetrics.density
+    val cellPx = cell.value * density
+    val gapPx = gapDp * density
+    val width = (weeks * (cellPx + gapPx) - gapPx).toInt().coerceAtLeast(1)
+    val height = (7 * (cellPx + gapPx) - gapPx).toInt().coerceAtLeast(1)
+    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    val color = context.app.settings.appearance.value.color
+    val accent = com.openneno.neno.ui.theme.Palette(com.openneno.neno.ui.theme.PALETTES.getValue(color)).p500.toArgb()
+    val today = LocalDate.now()
+    val radius = 3 * density
+    HeatmapData.grid(today, weeks).forEachIndexed { x, week ->
+        week.forEachIndexed { y, date ->
+            if (date.isAfter(today)) return@forEachIndexed
+            val count = counts[date.toString()] ?: 0
+            paint.color = when (HeatmapData.level(count)) {
+                0 -> android.graphics.Color.argb(46, 128, 128, 128)
+                1 -> withAlpha(accent, 0.35f)
+                2 -> withAlpha(accent, 0.65f)
+                else -> accent
+            }
+            val left = x * (cellPx + gapPx)
+            val top = y * (cellPx + gapPx)
+            canvas.drawRoundRect(left, top, left + cellPx, top + cellPx, radius, radius, paint)
+            if (date == today) {
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = 1.5f * density
+                paint.color = accent
+                canvas.drawRoundRect(left, top, left + cellPx, top + cellPx, radius, radius, paint)
+                paint.style = android.graphics.Paint.Style.FILL
+            }
+        }
+    }
+    return bitmap
+}
+
+private fun withAlpha(color: Int, alpha: Float) =
+    android.graphics.Color.argb((alpha * 255).toInt(), android.graphics.Color.red(color), android.graphics.Color.green(color), android.graphics.Color.blue(color))
 
 /** 笔记变化后刷新桌面组件(合并短时间内的多次变化) */
 object WidgetUpdater {

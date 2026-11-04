@@ -9,3 +9,7 @@
 .externalNativeBuild/
 .cxx/
 .kotlin/
+
+# 发布签名, 不要提交
+/keystore/
+*.jks

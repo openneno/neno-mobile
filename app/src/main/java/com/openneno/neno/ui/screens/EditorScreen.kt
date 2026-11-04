@@ -118,6 +118,15 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
     var linkDialog by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
+    // 关闭编辑器时收起键盘
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
 
     LaunchedEffect(Unit) {
         rich.config.linkColor = c.accentText

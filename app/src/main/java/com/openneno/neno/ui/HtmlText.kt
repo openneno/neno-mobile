@@ -154,8 +154,10 @@ object HtmlText {
     private fun AnnotatedString.Builder.walk(node: Node, ctx: Ctx, inLink: Boolean, inCode: Boolean) {
         when (node) {
             is TextNode -> {
-                val text = node.wholeText.replace('\n', ' ').replace(' ', ' ')
+                var text = node.wholeText.replace('\n', ' ').replace(' ', ' ')
                 if (text.isEmpty()) return
+                // 搜索时保持原文, 保证搜索词能匹配
+                if (!inLink && !inCode && ctx.keyword.isEmpty()) text = keepTagsTogether(text, ctx.tags)
                 if (inLink || inCode) append(text) else appendLinkified(text, ctx)
             }
 
@@ -226,7 +228,7 @@ object HtmlText {
             append(s)
             if (ctx.tags.isNotEmpty()) {
                 for (m in TAG_RE.findAll(text)) {
-                    val token = m.value
+                    val token = m.value.replace(JOINER, "")
                     if (token !in ctx.tags || linkRanges.any { m.range.first in it }) continue
                     val style = SpanStyle(color = ctx.colors.tag, background = ctx.colors.tagBackground, fontWeight = FontWeight.Medium)
                     val onClick = ctx.onTagClick
@@ -242,6 +244,20 @@ object HtmlText {
                     i = text.indexOf(ctx.keyword, i + ctx.keyword.length, ignoreCase = true)
                 }
             }
+        }
+    }
+
+    // 不可见的连字符, 禁止在它两侧换行
+    private const val JOINER = "⁠"
+
+    /** 标签整体换到下一行, 不在标签中间折行(与网页端 .neno-tag 的 inline-block 一致) */
+    private fun keepTagsTogether(text: String, tags: Set<String>): String {
+        if (tags.isEmpty() || '#' !in text) return text
+        return TAG_RE.replace(text) { m ->
+            if (m.value in tags && m.value.length <= 24) {
+                // 按码位拆分, 不拆开 emoji
+                m.value.codePoints().toArray().joinToString(JOINER) { String(Character.toChars(it)) }
+            } else m.value
         }
     }
 

@@ -12,8 +12,20 @@ android {
         applicationId = "com.openneno.neno"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI 发布时通过 -PversionCode / -PversionName 传入
+        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (findProperty("versionName") as String?) ?: "1.0.0"
+    }
+
+    // 发布签名从环境变量读取(见 .github/workflows/release.yml), 本地没有配置时使用 debug 签名
+    val releaseKeystore = System.getenv("NENO_KEYSTORE")?.takeIf { file(it).exists() }
+    signingConfigs {
+        if (releaseKeystore != null) create("release") {
+            storeFile = file(releaseKeystore)
+            storePassword = System.getenv("NENO_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("NENO_KEY_ALIAS")
+            keyPassword = System.getenv("NENO_KEY_PASSWORD")
+        }
     }
 
     buildTypes {
@@ -21,8 +33,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // 没有配置签名时使用 debug 签名, 方便直接安装 release 包
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "release" else "debug")
         }
     }
     compileOptions {
