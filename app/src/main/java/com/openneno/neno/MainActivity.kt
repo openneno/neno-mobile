@@ -11,14 +11,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.openneno.neno.ui.AppState
 import com.openneno.neno.ui.NenoRoot
 import com.openneno.neno.ui.Screen
 import com.openneno.neno.ui.theme.NenoTheme
 import com.openneno.neno.ui.theme.isDark
-import com.openneno.neno.ui.theme.nenoColors
 
 class MainActivity : ComponentActivity() {
     private val state: AppState by viewModels()
@@ -30,8 +28,9 @@ class MainActivity : ComponentActivity() {
             val appearance by app.settings.appearance.collectAsStateWithLifecycle()
             val dark = isDark(appearance)
             LaunchedEffect(dark, appearance.color) {
-                val canvas = nenoColors(dark, appearance.color).canvas.toArgb()
-                val style = if (dark) SystemBarStyle.dark(canvas) else SystemBarStyle.light(canvas, canvas)
+                // 系统栏透明, 由各个页面自己绘制背景(图片查看时是黑色)
+                val clear = android.graphics.Color.TRANSPARENT
+                val style = if (dark) SystemBarStyle.dark(clear) else SystemBarStyle.light(clear, clear)
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
             NenoTheme(appearance) {

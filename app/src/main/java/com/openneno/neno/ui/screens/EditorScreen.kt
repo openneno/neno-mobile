@@ -76,8 +76,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.mohamedrejeb.richeditor.model.rememberRichTextState
-import com.mohamedrejeb.richeditor.ui.material3.RichTextEditor
-import com.mohamedrejeb.richeditor.ui.material3.RichTextEditorDefaults
+import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.drawText
+import com.openneno.neno.ui.components.htmlColors
+import com.openneno.neno.ui.components.noteTypography
 import com.openneno.neno.data.Note
 import com.openneno.neno.data.NoteImage
 import com.openneno.neno.data.NoteRepository
@@ -113,8 +121,8 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
 
     LaunchedEffect(Unit) {
         rich.config.linkColor = c.accentText
-        rich.config.linkTextDecoration = TextDecoration.None
-        rich.config.listIndent = 20
+        rich.config.linkTextDecoration = TextDecoration.Underline
+        rich.config.listIndent = 21
         allTags = repo.allTags()
         if (screen.parentId.isNotEmpty()) parent = repo.note(screen.parentId)
         if (screen.id.isNotEmpty()) {
@@ -212,21 +220,32 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
                     Text(p.summary(120), fontSize = 13.sp, color = c.ink2, maxLines = 2)
                 }
             }
-            RichTextEditor(
-                state = rich,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).focusRequester(focus),
-                textStyle = NoteTextStyle.copy(color = c.ink, fontSize = 16.sp, lineHeight = 26.sp),
-                placeholder = {
-                    Text(if (screen.parentId.isNotEmpty()) "写下你的批注..." else "现在的想法是...", color = c.ink3, fontSize = 16.sp)
-                },
-                colors = RichTextEditorDefaults.richTextEditorColors(
-                    containerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    cursorColor = c.accent,
-                ),
-                minLines = 6,
-            )
+            // 与笔记展示使用相同的字号和行高, 所见即所得
+            val body = noteTypography().body
+            val tagColors = htmlColors()
+            var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
+                if (text.isEmpty()) {
+                    Text(if (screen.parentId.isNotEmpty()) "写下你的批注..." else "现在的想法是...", style = body.copy(color = c.ink3))
+                }
+                BasicRichTextEditor(
+                    state = rich,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).focusRequester(focus)
+                        .drawWithContent {
+                            // #标签 着色: 只改变绘制, 不写入笔记内容(与网页端 ::highlight 相同)
+                            val l = layout
+                            val ranges = l?.let { tagRanges(it.layoutInput.text.text) }.orEmpty()
+                            val paths = ranges.mapNotNull { r -> runCatching { l!!.getPathForRange(r.first, r.last + 1) }.getOrNull() }
+                            paths.forEach { drawPath(it, tagColors.tagBackground) }
+                            drawContent()
+                            if (l != null) paths.forEach { p -> clipPath(p) { drawText(l, color = tagColors.tag) } }
+                        },
+                    textStyle = body,
+                    cursorBrush = SolidColor(c.accent),
+                    onTextLayout = { layout = it },
+                    contentPadding = PaddingValues(0.dp),
+                )
+            }
             if (images.isNotEmpty()) {
                 Row(
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp).horizontalScroll(rememberScrollState()),
@@ -328,6 +347,11 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
         )
     }
 }
+
+private val TAG_RE = Regex("#\\S+")
+
+/** 文字中 #标签 的位置, 与保存时提取标签的规则一致 */
+private fun tagRanges(text: String): List<IntRange> = if ('#' !in text) emptyList() else TAG_RE.findAll(text).map { it.range }.toList()
 
 @Composable
 private fun ToolButton(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {

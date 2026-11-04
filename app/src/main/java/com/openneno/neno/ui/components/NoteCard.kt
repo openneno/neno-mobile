@@ -97,10 +97,6 @@ fun NoteCard(
     var confirmDelete by remember { mutableStateOf(false) }
     var expanded by rememberSaveable(note.id) { mutableStateOf(false) }
     var overflowing by remember(note.id, note.content) { mutableStateOf(false) }
-    val colors = htmlColors()
-    val text = remember(note.content, note.tags, keyword, colors) {
-        HtmlText.render(note.content, colors, note.tags, keyword, actions.onTag)
-    }
     val canCollapse = collapsible && keyword.isBlank()
 
     NenoCard(modifier.fillMaxWidth(), onClick = if (clickable) ({ actions.open(Screen.Detail(note.id)) }) else null) {
@@ -133,16 +129,15 @@ fun NoteCard(
                     }
                 }
             }
-            Box(Modifier.padding(end = 12.dp).animateContentSize()) {
-                Text(
-                    text,
-                    style = NoteTextStyle.copy(color = c.ink),
-                    maxLines = if (canCollapse && !expanded) COLLAPSED_LINES else Int.MAX_VALUE,
-                    overflow = TextOverflow.Ellipsis,
-                    onTextLayout = { if (!expanded) overflowing = it.hasVisualOverflow },
-                )
+            Collapsible(
+                collapsed = canCollapse && !expanded,
+                fade = c.surface,
+                modifier = Modifier.padding(end = 12.dp),
+                onOverflow = { if (overflowing != it) overflowing = it },
+            ) {
+                NoteContent(note.content, tags = note.tags, keyword = keyword, onTagClick = actions.onTag)
             }
-            if (canCollapse && (overflowing || expanded)) {
+            if (canCollapse && overflowing) {
                 Row(
                     Modifier.padding(top = 4.dp).clip(RoundedCornerShape(6.dp)).clickable { expanded = !expanded }.padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically

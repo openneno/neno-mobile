@@ -78,7 +78,9 @@ import com.openneno.neno.data.NoteImage
 import com.openneno.neno.data.NoteStats
 import com.openneno.neno.data.Times
 import com.openneno.neno.ui.HtmlColors
-import com.openneno.neno.ui.HtmlText
+import com.openneno.neno.ui.components.NoteContent
+import com.openneno.neno.ui.components.NoteTypography
+import androidx.compose.ui.unit.em
 import com.openneno.neno.ui.components.load
 import com.openneno.neno.ui.components.repository
 import com.openneno.neno.ui.theme.Neno
@@ -202,7 +204,10 @@ private fun ShareCard(note: Note, template: ShareTemplate, palette: Palette, sta
         else -> "$daysAgo 天前的想法"
     }
     val htmlColors = HtmlColors(s.accent, s.accent, Color.Transparent, s.ink2, s.line, Color.Transparent)
-    val text = remember(note.content, template) { HtmlText.render(note.content, htmlColors, note.tags) }
+    val typography = NoteTypography(
+        body = TextStyle(fontSize = 16.sp, lineHeight = 1.75.em, color = s.ink),
+        secondary = s.ink2, marker = s.ink2, quoteBar = s.accent.copy(alpha = 0.5f), codeBackground = s.line,
+    )
 
     Box(
         Modifier.width(340.dp).clip(RoundedCornerShape(20.dp)).background(s.background)
@@ -224,7 +229,7 @@ private fun ShareCard(note: Note, template: ShareTemplate, palette: Palette, sta
             }
             Spacer(Modifier.height(18.dp))
             Text("“", fontSize = 48.sp, lineHeight = 40.sp, color = s.accent.copy(alpha = 0.5f), fontFamily = FontFamily.Serif)
-            Text(text, style = TextStyle(fontSize = 16.sp, lineHeight = 28.sp, color = s.ink))
+            NoteContent(note.content, tags = note.tags, colors = htmlColors, typography = typography)
             val images = note.images.take(4)
             if (images.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
@@ -283,33 +288,3 @@ private suspend fun shareBitmap(context: Context, bitmap: Bitmap) {
     context.startActivity(Intent.createChooser(intent, "分享卡片"))
 }
 
-// ---------- 图片查看 ----------
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun ImageViewer(images: List<NoteImage>, index: Int, onBack: () -> Unit) {
-    val repo = repository()
-    val pager = rememberPagerState(initialPage = index) { images.size }
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-            var scale by remember { mutableFloatStateOf(1f) }
-            var offset by remember { mutableStateOf(Offset.Zero) }
-            AsyncImage(
-                model = repo.picFile(images[page]), contentDescription = null, contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            scale = (scale * zoom).coerceIn(1f, 5f)
-                            offset = if (scale > 1f) offset + pan else Offset.Zero
-                        }
-                    }
-                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
-            )
-        }
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, "关闭", tint = Color.White) }
-            Spacer(Modifier.weight(1f))
-            if (images.size > 1) Text("${pager.currentPage + 1} / ${images.size}", color = Color.White, modifier = Modifier.padding(end = 16.dp))
-        }
-    }
-}

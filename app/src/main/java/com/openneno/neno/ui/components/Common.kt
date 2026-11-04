@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -77,10 +78,12 @@ fun htmlColors(): HtmlColors {
     return HtmlColors(
         link = c.accentText,
         tag = c.accentText,
-        tagBackground = c.accentSoft,
+        // 与网页端 .neno-tag / ::highlight(neno-tag) 相同: 浅色 primary-50 底, 深色 primary-950 底
+        tagBackground = if (c.dark) c.primary.p950 else c.primary.p50,
         quote = c.ink2,
         code = c.surface2,
-        highlight = c.primary.p300.copy(alpha = if (c.dark) 0.35f else 0.55f),
+        // 搜索命中: 黄色底
+        highlight = Color(0xFFFACC15).copy(alpha = if (c.dark) 0.30f else 0.45f),
     )
 }
 
