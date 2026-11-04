@@ -1,0 +1,51 @@
+# This is a syncNenoToNotion workflow 
+
+name: sync single neno to notion
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the main branch
+  push:
+    branches: [ main ]
+
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "syncNenoToNotion"
+  syncNenoToNotion:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: check
+        if: ${{ contains(github.event.head_commit.message, '[ADD]') }}
+        run: | 
+          curl --location --request GET 'https://api.github.com/repos/Mran/neno/contents/syncNenoToNotion.js' \
+          --header 'pragma: no-cache' \
+          --header 'accept: application/vnd.github.v3.raw+json' \
+          --header 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'\
+          > syncNenoToNotion.js
+      - run: pwd
+      - run: ls
+      - name: Setup Node
+        if: ${{ contains(github.event.head_commit.message, '[ADD]') }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: '16.13.0'
+      - name: install dependence
+        if: ${{ contains(github.event.head_commit.message, '[ADD]') }}
+        run: npm i node-fetch@2.6.6
+      - name: runSync
+        if: ${{ contains(github.event.head_commit.message, '[ADD]') }}
+        env:
+          NOTION_DATABASEID: [NOTION_DATABASEID]
+          NOTION_TOKEN: [NOTION_TOKEN]
+          GITHUB_TOKEN: [GITHUB_TOKEN]
+        run: node syncNenoToNotion.js
+        
+       
+ 
