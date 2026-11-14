@@ -2,7 +2,7 @@
 
 # NENO for Android
 
-**记下此刻, 与未来的自己重逢**
+**记下此刻, 支援未来的自己**
 
 开源卡片笔记应用 [NENO](https://github.com/openneno/neno) 的安卓客户端。<br/>
 没有服务器, 笔记保存在你自己的 GitHub 仓库里, 与网页端、浏览器插件实时互通。
