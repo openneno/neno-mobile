@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.openneno.neno.app
+import com.openneno.neno.ui.components.HoldToTalkFab
 import com.openneno.neno.ui.AppState
 import com.openneno.neno.ui.NoteFilter
 import com.openneno.neno.ui.Screen
@@ -128,9 +130,13 @@ fun NotesScreen(state: AppState, actions: NoteActions, openDrawer: () -> Unit) {
             }
             if (!filter.active) item(key = "composer") {
                 NenoCard(Modifier.fillMaxWidth(), onClick = { actions.open(Screen.Editor()) }) {
-                    Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(start = 16.dp, end = 10.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("现在的想法是...", color = c.ink3, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                        Icon(Icons.Outlined.Draw, null, tint = c.ink3, modifier = Modifier.size(18.dp))
+                        Box(
+                            Modifier.padding(start = 8.dp).size(36.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(c.accentSoft).clickable { state.quickVoice = true },
+                            contentAlignment = Alignment.Center
+                        ) { Icon(Icons.Outlined.Mic, "语音记录", tint = c.accentText, modifier = Modifier.size(19.dp)) }
                     }
                 }
             }
@@ -157,12 +163,8 @@ fun NotesScreen(state: AppState, actions: NoteActions, openDrawer: () -> Unit) {
                 }
             }
         }
-        FloatingActionButton(
-            onClick = { actions.open(Screen.Editor()) },
-            containerColor = c.accent, contentColor = if (c.dark) Color(0xFF0F1013) else Color.White,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp),
-        ) { Icon(Icons.Outlined.Add, "记录") }
+        // 点击写笔记, 按住说话
+        HoldToTalkFab(onClick = { actions.open(Screen.Editor()) })
     }
 }
 

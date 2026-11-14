@@ -19,6 +19,19 @@ import java.time.temporal.ChronoUnit
 data class NoteImage(val key: String, val suffixName: String)
 
 /**
+ * 语音输入保存的一段录音. text 是语音识别出的原文(识别失败或未识别时为空).
+ * 仓库中保存在 audioData/<key>.<suffixName>, 与网页端的 audios 字段一致: {key, suffixName, duration_ms, text}
+ */
+data class NoteAudio(val key: String, val suffixName: String, val durationMs: Long, val text: String) {
+    fun toJson(): JsonObject = buildJsonObject {
+        put("key", JsonPrimitive(key))
+        put("suffixName", JsonPrimitive(suffixName))
+        put("duration_ms", JsonPrimitive(durationMs))
+        put("text", JsonPrimitive(text))
+    }
+}
+
+/**
  * 一条笔记. 保留原始的 JSON 对象(包括其他工具写入的未知字段和键的顺序), 只读取界面需要的字段.
  */
 class Note(val json: JsonObject) {
@@ -39,6 +52,19 @@ class Note(val json: JsonObject) {
             val key = (o["key"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
             if (key.isEmpty()) return@mapNotNull null
             NoteImage(key, (o["suffixName"] as? JsonPrimitive)?.contentOrNull ?: "png")
+        } ?: emptyList()
+
+    val audios: List<NoteAudio>
+        get() = (json["audios"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val key = (o["key"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            if (key.isEmpty()) return@mapNotNull null
+            NoteAudio(
+                key,
+                (o["suffixName"] as? JsonPrimitive)?.contentOrNull ?: "wav",
+                (o["duration_ms"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toLong() ?: 0L,
+                (o["text"] as? JsonPrimitive)?.contentOrNull ?: "",
+            )
         } ?: emptyList()
 
     val date: String get() = createdAt.take(10)

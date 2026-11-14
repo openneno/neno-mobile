@@ -47,6 +47,16 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
 
     fun picFile(image: NoteImage): File = picFile(image.key, db.picSuffix(image.key) ?: image.suffixName)
 
+    /** 语音输入的录音: files/audio/<id>.<后缀>, 后缀在文件名中, 不需要单独记录 */
+    val audioDir: File by lazy { File(context.filesDir, "audio").apply { mkdirs() } }
+
+    fun audioFile(id: String, suffix: String) = File(audioDir, "$id.$suffix")
+
+    fun audioFile(audio: NoteAudio): File = audioFile(audio.key, audio.suffixName)
+
+    /** 录音时的临时文件, 保存笔记时才移动到 audioDir */
+    fun newRecordingFile(): File = File(File(context.cacheDir, "recording").apply { mkdirs() }, "${ObjectId.next()}.wav")
+
     /** 数据变化: 本地修改时 local=true, 同步拉取时 false */
     fun changed(local: Boolean) {
         _version.value = _version.value + 1
@@ -105,6 +115,7 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
         pureContent: String,
         tags: List<String>,
         images: List<NoteImage>,
+        audios: List<NoteAudio> = emptyList(),
     ): Note = io {
         val old = if (id.isNotEmpty()) db.getNote(id) else null
         val imagesJson = JsonArray(images.mapIndexed { index, image ->
@@ -122,6 +133,7 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
                     "parentId" to JsonPrimitive(parentId.ifEmpty { old.parentId }),
                     "tags" to stringList(tags),
                     "images" to imagesJson,
+                    "audios" to JsonArray(audios.map { it.toJson() }),
                     "update_at" to JsonPrimitive(Times.now()),
                 )
             )
@@ -135,6 +147,7 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
                 put("source", JsonPrimitive("android"))
                 put("tags", stringList(tags))
                 put("images", imagesJson)
+                put("audios", JsonArray(audios.map { it.toJson() }))
                 put("created_at", JsonPrimitive(Times.now()))
             })
         }
@@ -144,6 +157,8 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
         if (old != null) {
             val keep = images.map { it.key }.toSet()
             for (image in old.images) if (image.key !in keep) deleteImageSync(image)
+            val keepAudio = audios.map { it.key }.toSet()
+            for (audio in old.audios) if (audio.key !in keepAudio) deleteAudioSync(audio)
         }
         note
     }.also { changed(true) }
@@ -152,6 +167,7 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
         io {
             val note = db.getNote(id) ?: return@io
             for (image in note.images) deleteImageSync(image)
+            for (audio in note.audios) deleteAudioSync(audio)
             db.deleteNote(id)
             // 记录删除前的创建时间, 推送时据此找到仓库中的文件
             db.markDirty("note", id, deleted = true, createdAt = note.createdAt)
@@ -164,6 +180,23 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
         picFile(image.key, suffix).delete()
         db.deletePic(image.key)
         db.markDirty("pic", image.key, deleted = true, suffix = suffix)
+    }
+
+    private fun deleteAudioSync(audio: NoteAudio) {
+        audioFile(audio).delete()
+        db.markDirty("audio", audio.key, deleted = true, suffix = audio.suffixName)
+    }
+
+    /** 把录音(临时文件)保存为笔记的语音, 返回语音信息(保存笔记时才会关联到笔记) */
+    suspend fun importRecording(file: File, durationMs: Long, text: String): NoteAudio = io {
+        val id = ObjectId.next()
+        val target = audioFile(id, "wav")
+        if (!file.renameTo(target)) {
+            file.copyTo(target, overwrite = true)
+            file.delete()
+        }
+        db.markDirty("audio", id, suffix = "wav")
+        NoteAudio(id, "wav", durationMs, text)
     }
 
     /** 把选择的图片复制到本地, 返回图片信息(保存笔记时才会关联到笔记) */
@@ -280,6 +313,12 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
                 put("allNenoCount", JsonArray(listOf(countDate)))
                 put("allNenoPinTags", JsonArray(listOf(pins)))
                 put("allNenoPic", JsonArray(pics))
+                put("allNenoAudio", JsonArray(allAudioFiles().map { file ->
+                    buildJsonObject {
+                        put("_id", JsonPrimitive(file.nameWithoutExtension))
+                        put("file", JsonPrimitive("data:${audioMime(file.extension)};base64," + Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)))
+                    }
+                }))
             })
         })
     }
@@ -290,6 +329,7 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
             val root = JsJson.parseObject(text)
             val body = (root["body"] as? JsonObject) ?: root
             val suffixes = HashMap<String, String>()
+            val audioSuffixes = HashMap<String, String>()
             var n = 0
             db.inTransaction { tx ->
                 for (el in (body["allNeno"] as? JsonArray).orEmpty()) {
@@ -298,6 +338,7 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
                     db.putNote(note, tx)
                     db.markDirty("note", note.id)
                     note.images.forEach { suffixes[it.key] = it.suffixName }
+                    note.audios.forEach { audioSuffixes[it.key] = it.suffixName }
                     n++
                 }
             }
@@ -327,11 +368,24 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
                 db.putPic(id, suffix)
                 if (suffixes.containsKey(id)) db.markDirty("pic", id, suffix = suffix)
             }
+            for (el in (body["allNenoAudio"] as? JsonArray).orEmpty()) {
+                val o = el as? JsonObject ?: continue
+                val id = o.stringOrNull("_id") ?: continue
+                val data = o.stringOrNull("file") ?: continue
+                val comma = data.indexOf(',')
+                if (comma < 0) continue
+                val suffix = audioSuffixes[id] ?: "wav"
+                audioFile(id, suffix).writeBytes(Base64.decode(data.substring(comma + 1), Base64.DEFAULT))
+                if (audioSuffixes.containsKey(id)) db.markDirty("audio", id, suffix = suffix)
+            }
             n
         }
         changed(true)
         return count
     }
+
+    /** 本地所有的录音文件 */
+    fun allAudioFiles(): List<File> = audioDir.listFiles()?.filter { it.isFile }.orEmpty()
 
     companion object {
         const val KEY_TAG_SETTINGS = "tagSettings"
@@ -366,6 +420,15 @@ class NoteRepository(private val context: Context, val db: NenoDb) {
             "bmp" -> "image/bmp"
             "webp" -> "image/webp"
             "apng" -> "image/apng"
+            else -> "application/octet-stream"
+        }
+
+        fun audioMime(suffix: String): String = when (suffix.lowercase()) {
+            "wav" -> "audio/wav"
+            "ogg", "opus" -> "audio/ogg"
+            "m4a" -> "audio/mp4"
+            "mp3" -> "audio/mpeg"
+            "webm" -> "audio/webm"
             else -> "application/octet-stream"
         }
 

@@ -44,6 +44,9 @@ class CompatTest {
         assertEquals("note", RepoLayout.classify("2026-10-26/6adecb5eebcd69e38944057d.json")!!.kind)
         val pic = RepoLayout.classify("picData/6adecb5eebcd69e38944057d.png")!!
         assertEquals("pic", pic.kind); assertEquals("png", pic.suffix)
+        val audio = RepoLayout.classify("audioData/6af7cdd4eceac8f5ff720519.wav")!!
+        assertEquals("audio", audio.kind); assertEquals("6af7cdd4eceac8f5ff720519", audio.id); assertEquals("wav", audio.suffix)
+        assertEquals("audioData/6af7cdd4eceac8f5ff720519.wav", RepoLayout.audioPath("6af7cdd4eceac8f5ff720519", "wav"))
         assertEquals("pinTags", RepoLayout.classify("pinTags/pinTags.json")!!.kind)
         assertNull(RepoLayout.classify("README.md"))
         assertNull(RepoLayout.classify("countDate/countDate.json"))

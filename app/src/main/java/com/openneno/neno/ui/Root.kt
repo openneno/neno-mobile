@@ -15,6 +15,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -40,6 +41,17 @@ fun NenoRoot(state: AppState, onExit: () -> Unit) {
     val holder = rememberSaveableStateHolder()
     val actions = NoteActions(open = { state.open(it) }, onTag = { state.showTag(it) })
     val openDrawer: () -> Unit = { scope.launch { drawer.open() } }
+
+    // 切换页面或应用退到后台时, 停止正在播放的语音
+    LaunchedEffect(state.stack.toList(), state.quickVoice) { com.openneno.neno.ui.components.AudioPlayback.stopAll() }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) com.openneno.neno.ui.components.AudioPlayback.stopAll()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     BackHandler {
         if (drawer.isOpen) scope.launch { drawer.close() }
@@ -90,6 +102,13 @@ fun NenoRoot(state: AppState, onExit: () -> Unit) {
                         }
                     }
                 }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = state.quickVoice,
+                enter = fadeIn(tween(160)) + androidx.compose.animation.slideInVertically(tween(220)) { it / 3 },
+                exit = fadeOut(tween(140)),
+            ) {
+                com.openneno.neno.ui.screens.QuickVoiceSheet(onClose = { state.quickVoice = false })
             }
         }
     }

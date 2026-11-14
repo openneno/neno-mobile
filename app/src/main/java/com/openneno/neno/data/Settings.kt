@@ -38,6 +38,16 @@ class Settings(context: Context) {
     private val _notion = MutableStateFlow(loadNotion())
     val notion: StateFlow<NotionConfig> = _notion.asStateFlow()
 
+    /** 语音输入: DeepSeek 语音识别的 API Key, 只保存在本机, 不同步 */
+    private val _asrApiKey = MutableStateFlow(prefs.getString("asr_api_key", "")!!)
+    val asrApiKey: StateFlow<String> = _asrApiKey.asStateFlow()
+
+    fun setAsrApiKey(value: String) {
+        val key = value.trim()
+        prefs.edit { putString("asr_api_key", key) }
+        _asrApiKey.value = key
+    }
+
     private fun loadGithub() = GithubConfig(
         token = prefs.getString("gh_token", "")!!,
         owner = prefs.getString("gh_owner", "")!!,

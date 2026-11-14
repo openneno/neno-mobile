@@ -35,6 +35,9 @@ class AppState : ViewModel() {
 
     var filter by mutableStateOf(NoteFilter())
 
+    /** 快速语音记录面板 */
+    var quickVoice by mutableStateOf(false)
+
     val current: Screen get() = stack.last()
 
     /** 最底层的主页面 */

@@ -39,6 +39,8 @@ import androidx.compose.material.icons.outlined.FormatStrikethrough
 import androidx.compose.material.icons.outlined.FormatUnderlined
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -87,7 +89,16 @@ import androidx.compose.ui.text.drawText
 import com.openneno.neno.ui.components.htmlColors
 import com.openneno.neno.ui.components.noteTypography
 import com.openneno.neno.data.Note
+import com.openneno.neno.data.NoteAudio
 import com.openneno.neno.data.NoteImage
+import com.openneno.neno.ui.components.AudioClip
+import com.openneno.neno.ui.components.Recording
+import com.openneno.neno.ui.components.RecordingStrip
+import com.openneno.neno.ui.components.rememberVoiceCapture
+import com.openneno.neno.ui.components.ClipStatus
+import com.openneno.neno.app
+import com.openneno.neno.voice.AsrClient
+import java.io.File
 import com.openneno.neno.data.NoteRepository
 import com.openneno.neno.ui.Screen
 import com.openneno.neno.ui.components.ConfirmDialog
@@ -102,6 +113,20 @@ private sealed interface EditorImage {
     data class Pending(val uri: Uri) : EditorImage
 }
 
+/**
+ * 编辑器中的一段语音. saved 不为空时是笔记已有的语音, 否则 file 是刚录的临时文件(保存笔记时才导入).
+ * text 是识别出的原文.
+ */
+private data class EditorAudio(
+    val uid: Long,
+    val saved: NoteAudio?,
+    val file: File,
+    val durationMs: Long,
+    val text: String = "",
+    val status: ClipStatus = ClipStatus.IDLE,
+    val error: String = "",
+)
+
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
@@ -111,6 +136,9 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val rich = rememberRichTextState()
     val images = remember { mutableStateListOf<EditorImage>() }
+    val audios = remember { mutableStateListOf<EditorAudio>() }
+    // 开始录音时光标的位置, 识别出的文字插入到这里
+    var recordInsertAt by remember { mutableStateOf<Int?>(null) }
     var loaded by remember { mutableStateOf(screen.id.isEmpty()) }
     var parent by remember { mutableStateOf<Note?>(null) }
     var allTags by remember { mutableStateOf(emptyList<String>()) }
@@ -125,6 +153,8 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
         onDispose {
             focusManager.clearFocus(force = true)
             keyboard?.hide()
+            // 没有保存的录音是临时文件, 保存时已经移走
+            audios.filter { it.saved == null }.forEach { it.file.delete() }
         }
     }
 
@@ -138,6 +168,9 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
             repo.note(screen.id)?.let { note ->
                 rich.setHtml(note.content.replace("&nbsp;", " "))
                 images += note.images.map { EditorImage.Saved(it) }
+                audios += note.audios.map { a ->
+                    EditorAudio(System.nanoTime() + a.key.hashCode(), a, repo.audioFile(a), a.durationMs, a.text)
+                }
             }
             loaded = true
         } else if (screen.initialText.isNotEmpty()) {
@@ -151,8 +184,79 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
     }
 
     val text = rich.annotatedString.text
-    val isEmpty = text.isBlank() && images.isEmpty()
+    val isEmpty = text.isBlank() && images.isEmpty() && audios.isEmpty()
     val dirty = !isEmpty && screen.id.isEmpty()
+    val transcribing = audios.any { it.status == ClipStatus.TRANSCRIBING }
+
+    // ---------- 语音输入 ----------
+    fun updateAudio(uid: Long, change: (EditorAudio) -> EditorAudio) {
+        val index = audios.indexOfFirst { it.uid == uid }
+        if (index >= 0) audios[index] = change(audios[index])
+    }
+
+    fun insertTranscript(transcript: String, at: Int?) {
+        val current = rich.annotatedString.text
+        // 编辑器末尾有时是一个换行
+        val end = current.trimEnd('\n').length
+        val index = (at ?: end).coerceIn(0, current.length)
+        val before = if (index > 0) current[index - 1] else '\n'
+        val insert = if (before.isWhitespace()) transcript else " $transcript"
+        rich.addTextAtIndex(index, insert)
+        rich.selection = TextRange(index + insert.length)
+    }
+
+    fun transcribe(uid: Long, at: Int? = null) {
+        val item = audios.firstOrNull { it.uid == uid } ?: return
+        val apiKey = context.app.settings.asrApiKey.value
+        if (apiKey.isBlank()) {
+            updateAudio(uid) { it.copy(status = ClipStatus.ERROR, error = "录音已保留。在 设置 → 语音输入 中填写 DeepSeek API Key 后, 可以重新识别为文字") }
+            return
+        }
+        if (!item.file.exists()) {
+            updateAudio(uid) { it.copy(status = ClipStatus.ERROR, error = "语音还没有同步到这台设备") }
+            return
+        }
+        updateAudio(uid) { it.copy(status = ClipStatus.TRANSCRIBING, error = "") }
+        scope.launch {
+            try {
+                val result = AsrClient.transcribe(item.file, apiKey)
+                // 识别期间语音可能已被移除
+                if (audios.none { it.uid == uid }) return@launch
+                updateAudio(uid) {
+                    it.copy(
+                        text = result,
+                        status = if (result.isEmpty()) ClipStatus.ERROR else ClipStatus.IDLE,
+                        error = if (result.isEmpty()) "没有识别到文字" else "",
+                    )
+                }
+                if (result.isNotEmpty()) insertTranscript(result, at)
+            } catch (e: Exception) {
+                updateAudio(uid) { it.copy(status = ClipStatus.ERROR, error = e.message ?: "识别失败") }
+            }
+        }
+    }
+
+    // 录音结束后加入语音列表并识别
+    fun onRecorded(r: Recording) {
+        val item = EditorAudio(System.nanoTime(), null, r.file, r.durationMs)
+        audios += item
+        transcribe(item.uid, recordInsertAt)
+    }
+    val capture = rememberVoiceCapture(onLimit = { it.finish()?.let(::onRecorded) })
+    val recording = capture.recording
+
+    suspend fun finishRecording() {
+        capture.finish()?.let(::onRecorded)
+    }
+
+    fun toggleRecording() {
+        if (recording) {
+            scope.launch { finishRecording() }
+            return
+        }
+        recordInsertAt = rich.selection.max.takeIf { text.isNotEmpty() }
+        capture.start()
+    }
 
     fun close() {
         if (dirty && !sending) confirmDiscard = true else onClose()
@@ -160,7 +264,7 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
     BackHandler { close() }
 
     fun send() {
-        if (isEmpty || sending) return
+        if (isEmpty || sending || transcribing || recording) return
         sending = true
         scope.launch {
             try {
@@ -172,9 +276,12 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
                         is EditorImage.Pending -> repo.importImage(image.uri)
                     }
                 }
+                val savedAudios = audios.map { a ->
+                    a.saved?.copy(text = a.text) ?: repo.importRecording(a.file, a.durationMs, a.text)
+                }
                 repo.save(
                     id = screen.id, parentId = screen.parentId, content = html, pureContent = pure,
-                    tags = NoteRepository.extractTags(pure), images = saved,
+                    tags = NoteRepository.extractTags(pure), images = saved, audios = savedAudios,
                 )
                 onClose()
             } catch (e: Exception) {
@@ -208,7 +315,7 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
                 fontWeight = FontWeight.SemiBold, fontSize = 18.sp, modifier = Modifier.weight(1f)
             )
             Button(
-                onClick = { send() }, enabled = !isEmpty && !sending && loaded,
+                onClick = { send() }, enabled = !isEmpty && !sending && loaded && !transcribing && !recording,
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = if (c.dark) Color(0xFF0F1013) else Color.White),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.padding(end = 8.dp).height(38.dp),
@@ -281,6 +388,26 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
             }
         }
 
+        if (audios.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                audios.forEach { a ->
+                    androidx.compose.runtime.key(a.uid) {
+                        AudioClip(
+                            file = a.file, durationMs = a.durationMs, text = a.text, status = a.status, error = a.error,
+                            onRetry = { transcribe(a.uid) },
+                            onDelete = {
+                                audios.removeAll { it.uid == a.uid }
+                                if (a.saved == null) a.file.delete()
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
         suggestions?.let { (start, end, list) ->
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
@@ -301,7 +428,12 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
             }
         }
         HorizontalDivider(color = c.line)
-        Row(
+        // 录音时用一条安静的状态栏替换工具栏, 高度不变
+        if (recording) RecordingStrip(
+            capture,
+            onCancel = { capture.cancel() },
+            onDone = { scope.launch { finishRecording() } },
+        ) else Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -314,6 +446,7 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
             ToolButton(Icons.Outlined.Image, "添加图片") {
                 pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             }
+            ToolButton(Icons.Outlined.Mic, "语音输入") { toggleRecording() }
             ToolButton(Icons.Outlined.FormatBold, "加粗", span.fontWeight == FontWeight.Bold) {
                 rich.toggleSpanStyle(SpanStyle(fontWeight = FontWeight.Bold))
             }
@@ -363,14 +496,14 @@ private val TAG_RE = Regex("#\\S+")
 private fun tagRanges(text: String): List<IntRange> = if ('#' !in text) emptyList() else TAG_RE.findAll(text).map { it.range }.toList()
 
 @Composable
-private fun ToolButton(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
+private fun ToolButton(icon: ImageVector, label: String, active: Boolean = false, tint: Color? = null, onClick: () -> Unit) {
     val c = Neno.colors
     Box(
         Modifier.size(42.dp).padding(3.dp).clip(RoundedCornerShape(10.dp))
             .background(if (active) c.accentSoft else Color.Transparent)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
-    ) { Icon(icon, label, tint = if (active) c.accentText else c.ink2, modifier = Modifier.size(21.dp)) }
+    ) { Icon(icon, label, tint = tint ?: if (active) c.accentText else c.ink2, modifier = Modifier.size(21.dp)) }
 }
 
 private fun normalizeHref(value: String): String {

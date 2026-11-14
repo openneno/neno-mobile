@@ -58,8 +58,14 @@ class MainActivity : ComponentActivity() {
             if (text.isNotBlank()) state.open(Screen.Editor(initialText = text))
             return
         }
+        // 桌面图标长按菜单中的快捷方式
+        when (intent.action) {
+            SHORTCUT_VOICE -> { state.quickVoice = true; intent.action = Intent.ACTION_MAIN; return }
+            SHORTCUT_COMPOSE -> { state.open(Screen.Editor()); intent.action = Intent.ACTION_MAIN; return }
+        }
         when (intent.getStringExtra(EXTRA_ACTION)) {
             ACTION_COMPOSE -> state.open(Screen.Editor())
+            ACTION_VOICE -> state.quickVoice = true
             ACTION_DAILY -> state.open(Screen.Daily)
             ACTION_WALK -> state.open(Screen.Walk)
             ACTION_DETAIL -> intent.getStringExtra(EXTRA_NOTE_ID)?.let {
@@ -80,6 +86,9 @@ class MainActivity : ComponentActivity() {
         const val ACTION_WALK = "walk"
         const val ACTION_DETAIL = "detail"
         const val ACTION_DAY = "day"
+        const val ACTION_VOICE = "voice"
+        const val SHORTCUT_VOICE = "com.openneno.neno.action.VOICE"
+        const val SHORTCUT_COMPOSE = "com.openneno.neno.action.COMPOSE"
 
         fun intent(context: Context, action: String, noteId: String? = null, day: String? = null) =
             Intent(context, MainActivity::class.java).apply {

@@ -109,6 +109,10 @@ fun SettingsScreen(openDrawer: () -> Unit) {
         ) {
             Section("外观", "选择浅色, 深色或跟随系统, 以及喜欢的主题色。") { AppearanceSettings() }
             Section("同步", "笔记保存在你自己的 GitHub 私有仓库中, 无需服务器, 也可以完全离线使用。") { SyncSettings() }
+            Section(
+                "语音输入",
+                "点击编辑器中的麦克风录音(每段最长 2 分钟), 由 DeepSeek 识别为文字, 自动识别语言。原始录音和识别出的原文会随笔记一起保存和同步。API Key 只保存在这台设备上。"
+            ) { VoiceSettings() }
             val github by LocalContext.current.app.settings.github.collectAsStateWithLifecycle()
             if (github.configured) Section(
                 "同步到 Notion",
@@ -471,6 +475,73 @@ fun qrBitmap(text: String, size: Int): Bitmap {
     val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, mapOf(EncodeHintType.MARGIN to 1))
     val pixels = IntArray(size * size) { i -> if (matrix[i % size, i / size]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt() }
     return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+}
+
+// ---------- 语音输入 ----------
+
+@Composable
+private fun VoiceSettings() {
+    val c = Neno.colors
+    val context = LocalContext.current
+    val app = context.app
+    val scope = rememberCoroutineScope()
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val saved by app.settings.asrApiKey.collectAsStateWithLifecycle()
+    var key by remember(saved) { mutableStateOf(saved) }
+    var visible by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    // null 未检测, "" 可用, 其他为错误信息
+    var result by remember { mutableStateOf<String?>(null) }
+
+    OutlinedTextField(
+        key, { key = it; result = null },
+        label = { Text("DeepSeek API Key") },
+        placeholder = { Text("sk-...") },
+        singleLine = true,
+        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                Icon(if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (visible) "隐藏" else "显示", tint = c.ink3)
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "获取 API Key", fontSize = 13.sp, color = c.accentText,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { uriHandler.openUri("https://platform.deepseek.com/api_keys") }.padding(vertical = 6.dp),
+        )
+        Spacer(Modifier.weight(1f))
+        when {
+            result == "" -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Check, null, tint = c.accentText, modifier = Modifier.size(16.dp))
+                Text("可用", fontSize = 13.sp, color = c.accentText, modifier = Modifier.padding(start = 2.dp, end = 8.dp))
+            }
+
+            result != null -> Text(result!!, fontSize = 13.sp, color = c.danger, modifier = Modifier.padding(end = 8.dp).weight(1f, fill = false))
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(enabled = key.trim() != saved, onClick = {
+            app.settings.setAsrApiKey(key)
+            Toast.makeText(context, "已保存", Toast.LENGTH_SHORT).show()
+        }) { Text("保存") }
+        Button(enabled = !checking && key.isNotBlank(), colors = primaryColors(), onClick = {
+            app.settings.setAsrApiKey(key)
+            checking = true
+            result = null
+            scope.launch {
+                result = try {
+                    com.openneno.neno.voice.AsrClient.check(key.trim(), context.cacheDir); ""
+                } catch (e: Exception) {
+                    e.message ?: "检测失败"
+                }
+                checking = false
+            }
+        }) { Text(if (checking) "检测中..." else "检测") }
+    }
 }
 
 // ---------- Notion ----------

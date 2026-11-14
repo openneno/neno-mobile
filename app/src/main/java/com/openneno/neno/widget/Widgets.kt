@@ -130,8 +130,10 @@ class QuickNoteWidget : GlanceAppWidget() {
                 Spacer(GlanceModifier.width(10.dp))
                 Text("现在的想法是...", style = TextStyle(color = c.ink3, fontSize = 14.sp), maxLines = 1)
             }
+            // 快速语音记录, 说完自动保存为笔记
+            Spacer(GlanceModifier.width(6.dp))
+            IconButton(context, R.drawable.ic_mic, MainActivity.ACTION_VOICE, c)
             if (wide) {
-                Spacer(GlanceModifier.width(6.dp))
                 IconButton(context, R.drawable.ic_calendar, MainActivity.ACTION_DAILY, c)
                 IconButton(context, R.drawable.ic_walk, MainActivity.ACTION_WALK, c)
             }

@@ -49,11 +49,13 @@ data class SyncStatus(
  * 笔记仓库的文件结构, 与网页端及其他扩展工具保持一致:
  *   YYYY-MM-DD/<笔记 _id>.json   一条笔记
  *   picData/<图片 _id>.<后缀>     一张图片
+ *   audioData/<语音 _id>.<后缀>   一段语音输入的录音(笔记的 audios 字段引用)
  *   pinTags/pinTags.json          标签设置
  */
 object RepoLayout {
     private val NOTE_PATH = Regex("^(\\d{4}-\\d{2}-\\d{2})/([0-9a-zA-Z]+)\\.json$")
     private val PIC_PATH = Regex("^picData/([^/.]+)\\.([0-9a-zA-Z]+)$")
+    private val AUDIO_PATH = Regex("^audioData/([^/.]+)\\.([0-9a-zA-Z]+)$")
     const val PIN_TAGS_PATH = "pinTags/pinTags.json"
 
     data class PathInfo(val kind: String, val id: String, val suffix: String = "")
@@ -61,12 +63,14 @@ object RepoLayout {
     fun classify(path: String): PathInfo? {
         NOTE_PATH.find(path)?.let { return PathInfo("note", it.groupValues[2]) }
         PIC_PATH.find(path)?.let { return PathInfo("pic", it.groupValues[1], it.groupValues[2]) }
+        AUDIO_PATH.find(path)?.let { return PathInfo("audio", it.groupValues[1], it.groupValues[2]) }
         if (path == PIN_TAGS_PATH) return PathInfo("pinTags", "pinTags")
         return null
     }
 
     fun notePath(note: Note) = "${note.createdAt.take(10)}/${note.id}.json"
     fun picPath(id: String, suffix: String) = "picData/$id.$suffix"
+    fun audioPath(id: String, suffix: String) = "audioData/$id.$suffix"
 }
 
 /**
@@ -268,6 +272,15 @@ class SyncEngine(private val repo: NoteRepository, private val settings: Setting
                                 changed = true
                             }
 
+                            "audio" -> {
+                                // 本地新增或删除了这段语音, 以本地为准
+                                if (dirty != null) return@withPermit
+                                val file = repo.audioFile(info.id, info.suffix)
+                                if (file.exists() && GitBlob.sha(file.readBytes()) == sha) return@withPermit
+                                file.writeBytes(fetchBlob(sha))
+                                changed = true
+                            }
+
                             "pinTags" -> {
                                 if (dirty == null && base[path] == null &&
                                     GitBlob.sha(pinTagsBytes()) == sha
@@ -307,11 +320,13 @@ class SyncEngine(private val repo: NoteRepository, private val settings: Setting
             // 本地有新的修改时保留, 稍后重新推送
             if (dirty != null && !dirty.deleted) continue
             if (dirty != null) dropDirty(dirty)
-            if (info.kind == "note") {
-                db.deleteNote(info.id)
-            } else {
-                repo.picFile(info.id, info.suffix).delete()
-                db.deletePic(info.id)
+            when (info.kind) {
+                "note" -> db.deleteNote(info.id)
+                "audio" -> repo.audioFile(info.id, info.suffix).delete()
+                else -> {
+                    repo.picFile(info.id, info.suffix).delete()
+                    db.deletePic(info.id)
+                }
             }
             changed = true
         }
@@ -326,6 +341,13 @@ class SyncEngine(private val repo: NoteRepository, private val settings: Setting
                     val suffix = db.picSuffix(image.key) ?: continue
                     if (RepoLayout.picPath(image.key, suffix) !in remote && !dirtyMap.containsKey("pic:${image.key}")) {
                         db.markDirty("pic", image.key, suffix = suffix)
+                    }
+                }
+                for (audio in note.audios) {
+                    if (RepoLayout.audioPath(audio.key, audio.suffixName) !in remote && !dirtyMap.containsKey("audio:${audio.key}")
+                        && repo.audioFile(audio).exists()
+                    ) {
+                        db.markDirty("audio", audio.key, suffix = audio.suffixName)
                     }
                 }
             }
@@ -397,7 +419,11 @@ class SyncEngine(private val repo: NoteRepository, private val settings: Setting
             if (modified.size == 1) return "[MODIFY] ${modified[0].note!!.summary()}"
             return "[DELETE] 删除 1 条笔记"
         }
-        if (notes.isEmpty()) return if (changes.any { it.entry.kind == "pinTags" }) "update pinTags" else "update pictures"
+        if (notes.isEmpty()) return when {
+            changes.any { it.entry.kind == "pinTags" } -> "update pinTags"
+            changes.all { it.entry.kind == "audio" } -> "update audio"
+            else -> "update pictures"
+        }
         val parts = buildList {
             if (added.isNotEmpty()) add("新增 ${added.size} 条")
             if (modified.isNotEmpty()) add("修改 ${modified.size} 条")
@@ -434,6 +460,21 @@ class SyncEngine(private val repo: NoteRepository, private val settings: Setting
                         if (base[path] != null) change = Change(entry, path, deletion = true)
                     } else {
                         val file = repo.picFile(entry.id, suffix)
+                        if (file.exists()) {
+                            val bytes = file.readBytes()
+                            val sha = GitBlob.sha(bytes)
+                            if (base[path] != sha) change = Change(entry, path, bytes = bytes, sha = sha)
+                        }
+                    }
+                }
+
+                "audio" -> {
+                    val suffix = entry.suffix ?: "wav"
+                    val path = RepoLayout.audioPath(entry.id, suffix)
+                    if (entry.deleted) {
+                        if (base[path] != null) change = Change(entry, path, deletion = true)
+                    } else {
+                        val file = repo.audioFile(entry.id, suffix)
                         if (file.exists()) {
                             val bytes = file.readBytes()
                             val sha = GitBlob.sha(bytes)

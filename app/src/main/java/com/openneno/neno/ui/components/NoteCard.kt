@@ -150,6 +150,16 @@ fun NoteCard(
                 Spacer(Modifier.height(10.dp))
                 ImageRow(note.images, onClick = { i -> actions.open(Screen.Images(note.images, i)) })
             }
+            if (note.audios.isNotEmpty()) {
+                val repo = repository()
+                Column(Modifier.padding(top = 10.dp, end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    note.audios.forEach { audio ->
+                        androidx.compose.runtime.key(audio.key) {
+                            AudioClip(repo.audioFile(audio), audio.durationMs, audio.text)
+                        }
+                    }
+                }
+            }
             if (view.parent != null || view.children.isNotEmpty()) {
                 Column(
                     Modifier.padding(top = 10.dp, end = 12.dp).fillMaxWidth()
@@ -192,7 +202,7 @@ private fun RelationRow(icon: androidx.compose.ui.graphics.vector.ImageVector, t
     ) {
         Icon(icon, null, tint = c.ink3, modifier = Modifier.size(15.dp))
         Spacer(Modifier.width(6.dp))
-        Text(text.ifEmpty { "(图片)" }, fontSize = 13.sp, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text.ifEmpty { "(图片或语音)" }, fontSize = 13.sp, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
