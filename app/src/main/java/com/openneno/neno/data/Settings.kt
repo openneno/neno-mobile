@@ -48,6 +48,15 @@ class Settings(context: Context) {
         _asrApiKey.value = key
     }
 
+    /** 编辑器使用 Markdown 模式(否则是富文本), 只保存在本机 */
+    private val _editorMarkdown = MutableStateFlow(prefs.getBoolean("editor_markdown", false))
+    val editorMarkdown: StateFlow<Boolean> = _editorMarkdown.asStateFlow()
+
+    fun setEditorMarkdown(value: Boolean) {
+        prefs.edit { putBoolean("editor_markdown", value) }
+        _editorMarkdown.value = value
+    }
+
     private fun loadGithub() = GithubConfig(
         token = prefs.getString("gh_token", "")!!,
         owner = prefs.getString("gh_owner", "")!!,

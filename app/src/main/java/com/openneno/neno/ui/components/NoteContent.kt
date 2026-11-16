@@ -27,7 +27,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
@@ -52,11 +54,23 @@ data class NoteTypography(
 val NOTE_FONT_SIZE = 15.sp
 val NOTE_LINE_HEIGHT = 1.75.em
 
+/**
+ * 每一行都严格占 1.75em, 不受字体影响.
+ * Compose 默认会裁掉每个 Text 第一行上方和最后一行下方的行距(Trim.Both), 而笔记展示时每个段落是单独的 Text,
+ * 编辑器是一整段文字, 裁掉的高度又取决于系统字体的上下边距, 所以不同机型上展示和编辑时的段落间隙不一样.
+ * 编辑器和展示都使用 Trim.None, 并且不加字体边距.
+ */
+val NOTE_LINE_HEIGHT_STYLE = LineHeightStyle(alignment = LineHeightStyle.Alignment.Center, trim = LineHeightStyle.Trim.None)
+
 @Composable
 fun noteTypography(): NoteTypography {
     val c = Neno.colors
     return NoteTypography(
-        body = TextStyle(fontSize = NOTE_FONT_SIZE, lineHeight = NOTE_LINE_HEIGHT, color = c.ink),
+        body = TextStyle(
+            fontSize = NOTE_FONT_SIZE, lineHeight = NOTE_LINE_HEIGHT, color = c.ink,
+            lineHeightStyle = NOTE_LINE_HEIGHT_STYLE,
+            platformStyle = PlatformTextStyle(includeFontPadding = false),
+        ),
         secondary = c.ink2,
         marker = c.ink3,
         quoteBar = c.primary.p500.copy(alpha = 0.5f),
@@ -101,8 +115,8 @@ fun NoteBlocks(blocks: List<NoteBlock>, t: NoteTypography, modifier: Modifier = 
                 }
 
                 is NoteBlock.ListItem -> {
-                    // 列表上下留出 0.2em, 与网页端 ul { margin: .2em 0 } 一致
-                    Column(Modifier.padding(vertical = 3.dp)) {
+                    // 列表上下没有额外间距, 与编辑器以及网页端一致
+                    Column {
                         while (i < blocks.size && blocks[i] is NoteBlock.ListItem) {
                             ListItemRow(blocks[i] as NoteBlock.ListItem, t)
                             i++
@@ -113,7 +127,7 @@ fun NoteBlocks(blocks: List<NoteBlock>, t: NoteTypography, modifier: Modifier = 
                 is NoteBlock.Quote -> {
                     // 连续的引用画成一组, 左侧一条竖线
                     Column(
-                        Modifier.padding(vertical = 2.dp).drawBehind {
+                        Modifier.drawBehind {
                             drawRect(t.quoteBar, topLeft = Offset.Zero, size = size.copy(width = 2.5.dp.toPx()))
                         }.padding(start = 13.dp)
                     ) {

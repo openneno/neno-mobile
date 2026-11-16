@@ -3,17 +3,16 @@ package com.openneno.neno.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.openneno.neno.ui.theme.NenoColors
 import java.time.LocalDate
@@ -53,20 +52,38 @@ object HeatmapData {
 @Composable
 fun Heatmap(counts: Map<String, Int>, colors: NenoColors, onDayClick: (String) -> Unit, modifier: Modifier = Modifier) {
     val today = LocalDate.now()
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        HeatmapData.grid(today).forEach { week ->
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    val weeks = HeatmapData.grid(today)
+    val gap = with(LocalDensity.current) { 3.dp.roundToPx() }
+    val shape = RoundedCornerShape(3.dp)
+    // 所有格子使用同一个整数像素的边长, 横竖间距相同.
+    // (按权重分列时, 除不尽的像素让部分列宽 1px, 正方形的格子随之变高, 越往下越对不齐)
+    Layout(
+        content = {
+            weeks.forEach { week ->
                 week.forEach { date ->
                     val key = date.toString()
                     val count = counts[key] ?: 0
                     val future = date.isAfter(today)
                     Box(
-                        Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(3.dp))
+                        Modifier.clip(shape)
                             .background(if (future) Color.Transparent else HeatmapData.color(colors, count))
-                            .then(if (date == today) Modifier.border(1.dp, colors.accent, RoundedCornerShape(3.dp)) else Modifier)
+                            .then(if (date == today) Modifier.border(1.dp, colors.accent, shape) else Modifier)
                             .then(if (!future) Modifier.clickable { onDayClick(key) } else Modifier)
                     )
                 }
+            }
+        },
+        modifier = modifier.fillMaxWidth(),
+    ) { measurables, constraints ->
+        val columns = weeks.size
+        val width = constraints.maxWidth
+        val cell = ((width - gap * (columns - 1)) / columns).coerceAtLeast(1)
+        // 除不尽的几个像素平分到两侧
+        val start = (width - cell * columns - gap * (columns - 1)) / 2
+        val placeables = measurables.map { it.measure(Constraints.fixed(cell, cell)) }
+        layout(width, cell * 7 + gap * 6) {
+            placeables.forEachIndexed { index, placeable ->
+                placeable.place(start + index / 7 * (cell + gap), index % 7 * (cell + gap))
             }
         }
     }

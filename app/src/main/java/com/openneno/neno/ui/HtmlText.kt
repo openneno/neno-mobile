@@ -112,7 +112,9 @@ object HtmlText {
             "li" -> out += NoteBlock.ListItem(inline(el.childNodes(), ctx), "•", false, level)
             else -> {
                 val heading = if (tag.length == 2 && tag[0] == 'h') tag[1].digitToIntOrNull() ?: 0 else 0
-                addParagraphs(out, el.childNodes(), ctx, heading)
+                // 网页端编辑器(quill 2)把空行保存为空的 <p></p>, 同样占一行
+                if (el.childNodes().isEmpty() && (tag == "p" || heading > 0)) out += NoteBlock.Blank
+                else addParagraphs(out, el.childNodes(), ctx, heading)
             }
         }
     }

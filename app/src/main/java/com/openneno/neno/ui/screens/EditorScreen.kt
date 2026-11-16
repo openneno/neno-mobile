@@ -41,6 +41,12 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.FormatQuote
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.TextFieldValue
+import com.openneno.neno.data.Markdown
 import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -146,6 +152,9 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
     var linkDialog by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
+    // Markdown 模式: 笔记仍以 html 保存, 切换和发送时转换; 模式只记在本机
+    var mdMode by remember { mutableStateOf(context.app.settings.editorMarkdown.value) }
+    var md by remember { mutableStateOf(TextFieldValue("")) }
     // 关闭编辑器时收起键盘
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -166,7 +175,9 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
         if (screen.parentId.isNotEmpty()) parent = repo.note(screen.parentId)
         if (screen.id.isNotEmpty()) {
             repo.note(screen.id)?.let { note ->
-                rich.setHtml(note.content.replace("&nbsp;", " "))
+                val html = note.content.replace("&nbsp;", " ")
+                if (mdMode) Markdown.fromHtml(html).let { md = TextFieldValue(it, TextRange(it.length)) }
+                else rich.setHtml(html)
                 images += note.images.map { EditorImage.Saved(it) }
                 audios += note.audios.map { a ->
                     EditorAudio(System.nanoTime() + a.key.hashCode(), a, repo.audioFile(a), a.durationMs, a.text)
@@ -174,7 +185,8 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
             }
             loaded = true
         } else if (screen.initialText.isNotEmpty()) {
-            rich.setText(screen.initialText)
+            if (mdMode) md = TextFieldValue(screen.initialText, TextRange(screen.initialText.length))
+            else rich.setText(screen.initialText)
         }
         focus.requestFocus()
     }
@@ -183,7 +195,8 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
         images += uris.map { EditorImage.Pending(it) }
     }
 
-    val text = rich.annotatedString.text
+    val text = if (mdMode) md.text else rich.annotatedString.text
+    val selection = if (mdMode) md.selection else rich.selection
     val isEmpty = text.isBlank() && images.isEmpty() && audios.isEmpty()
     val dirty = !isEmpty && screen.id.isEmpty()
     val transcribing = audios.any { it.status == ClipStatus.TRANSCRIBING }
@@ -195,6 +208,12 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
     }
 
     fun insertTranscript(transcript: String, at: Int?) {
+        if (mdMode) {
+            val index = (at ?: md.text.length).coerceIn(0, md.text.length)
+            val before = if (index > 0) md.text[index - 1] else '\n'
+            md = md.replaceRange(index, index, if (before.isWhitespace()) transcript else " $transcript")
+            return
+        }
         val current = rich.annotatedString.text
         // 编辑器末尾有时是一个换行
         val end = current.trimEnd('\n').length
@@ -254,7 +273,7 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
             scope.launch { finishRecording() }
             return
         }
-        recordInsertAt = rich.selection.max.takeIf { text.isNotEmpty() }
+        recordInsertAt = selection.max.takeIf { text.isNotEmpty() }
         capture.start()
     }
 
@@ -268,7 +287,7 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
         sending = true
         scope.launch {
             try {
-                val html = rich.toHtml().replace("&nbsp;", " ")
+                val html = if (mdMode) Markdown.toHtml(md.text) else rich.toHtml().replace("&nbsp;", " ")
                 val pure = Note.htmlToText(html)
                 val saved = images.map { image ->
                     when (image) {
@@ -291,10 +310,24 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
         }
     }
 
+    fun toggleMarkdown() {
+        if (mdMode) {
+            rich.setHtml(Markdown.toHtml(md.text))
+            rich.selection = TextRange(rich.annotatedString.text.length)
+        } else {
+            val markdown = if (rich.annotatedString.text.isBlank()) "" else Markdown.fromHtml(rich.toHtml().replace("&nbsp;", " "))
+            md = TextFieldValue(markdown, TextRange(markdown.length))
+        }
+        mdMode = !mdMode
+        context.app.settings.setEditorMarkdown(mdMode)
+    }
+    // 切换模式后把焦点交给新的输入框
+    LaunchedEffect(mdMode) { runCatching { focus.requestFocus() } }
+
     // #标签 自动补全: 光标前最近的 # 到光标之间没有空白
-    val suggestions = remember(text, rich.selection, allTags) {
-        val cursor = rich.selection.min
-        if (!rich.selection.collapsed || cursor > text.length) return@remember null
+    val suggestions = remember(text, selection, allTags) {
+        val cursor = selection.min
+        if (!selection.collapsed || cursor > text.length) return@remember null
         val start = text.lastIndexOf('#', (cursor - 1).coerceAtLeast(0))
         if (start < 0 || cursor <= start) return@remember null
         val typed = text.substring(start, cursor)
@@ -344,23 +377,36 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
                 if (text.isEmpty()) {
                     Text(if (screen.parentId.isNotEmpty()) "写下你的批注..." else "现在的想法是...", style = body.copy(color = c.ink3))
                 }
-                BasicRichTextEditor(
-                    state = rich,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).focusRequester(focus)
-                        .drawWithContent {
-                            // #标签 着色: 只改变绘制, 不写入笔记内容(与网页端 ::highlight 相同)
-                            val l = layout
-                            val ranges = l?.let { tagRanges(it.layoutInput.text.text) }.orEmpty()
-                            val paths = ranges.mapNotNull { r -> runCatching { l!!.getPathForRange(r.first, r.last + 1) }.getOrNull() }
-                            paths.forEach { drawPath(it, tagColors.tagBackground) }
-                            drawContent()
-                            if (l != null) paths.forEach { p -> clipPath(p) { drawText(l, color = tagColors.tag) } }
-                        },
-                    textStyle = body,
-                    cursorBrush = SolidColor(c.accent),
-                    onTextLayout = { layout = it },
-                    contentPadding = PaddingValues(0.dp),
-                )
+                val fieldModifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).focusRequester(focus)
+                    .drawWithContent {
+                        // #标签 着色: 只改变绘制, 不写入笔记内容(与网页端 ::highlight 相同)
+                        val l = layout
+                        val ranges = l?.let { tagRanges(it.layoutInput.text.text) }.orEmpty()
+                        val paths = ranges.mapNotNull { r -> runCatching { l!!.getPathForRange(r.first, r.last + 1) }.getOrNull() }
+                        paths.forEach { drawPath(it, tagColors.tagBackground) }
+                        drawContent()
+                        if (l != null) paths.forEach { p -> clipPath(p) { drawText(l, color = tagColors.tag) } }
+                    }
+                if (mdMode) {
+                    BasicTextField(
+                        value = md,
+                        onValueChange = { md = continueMarkdownList(md, it) },
+                        modifier = fieldModifier,
+                        textStyle = body,
+                        cursorBrush = SolidColor(c.accent),
+                        onTextLayout = { layout = it },
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                    )
+                } else {
+                    BasicRichTextEditor(
+                        state = rich,
+                        modifier = fieldModifier,
+                        textStyle = body,
+                        cursorBrush = SolidColor(c.accent),
+                        onTextLayout = { layout = it },
+                        contentPadding = PaddingValues(0.dp),
+                    )
+                }
             }
             if (images.isNotEmpty()) {
                 Row(
@@ -418,8 +464,11 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
                         tag,
                         Modifier.clip(RoundedCornerShape(8.dp)).background(c.accentSoft)
                             .clickable {
-                                rich.replaceTextRange(TextRange(start, end), "$tag ")
-                                rich.selection = TextRange(start + tag.length + 1)
+                                if (mdMode) md = md.replaceRange(start, end, "$tag ")
+                                else {
+                                    rich.replaceTextRange(TextRange(start, end), "$tag ")
+                                    rich.selection = TextRange(start + tag.length + 1)
+                                }
                             }
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         color = c.accentText, fontSize = 14.sp
@@ -439,29 +488,45 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
         ) {
             val span = rich.currentSpanStyle
             ToolButton(Icons.Outlined.Tag, "插入标签") {
-                val sel = rich.selection
-                rich.addTextAtIndex(sel.max, "#")
-                rich.selection = TextRange(sel.max + 1)
+                if (mdMode) md = md.replaceRange(md.selection.min, md.selection.max, "#")
+                else {
+                    val sel = rich.selection
+                    rich.addTextAtIndex(sel.max, "#")
+                    rich.selection = TextRange(sel.max + 1)
+                }
             }
             ToolButton(Icons.Outlined.Image, "添加图片") {
                 pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             }
             ToolButton(Icons.Outlined.Mic, "语音输入") { toggleRecording() }
-            ToolButton(Icons.Outlined.FormatBold, "加粗", span.fontWeight == FontWeight.Bold) {
-                rich.toggleSpanStyle(SpanStyle(fontWeight = FontWeight.Bold))
+            MarkdownToggle(mdMode) { toggleMarkdown() }
+            if (mdMode) {
+                // Markdown 模式: 按钮插入 Markdown 语法
+                ToolButton(Icons.Outlined.FormatBold, "加粗") { md = md.wrapSelection("**") }
+                ToolButton(Icons.Outlined.FormatItalic, "斜体") { md = md.wrapSelection("*") }
+                ToolButton(Icons.Outlined.FormatStrikethrough, "删除线") { md = md.wrapSelection("~~") }
+                ToolButton(Icons.Outlined.FormatListBulleted, "无序列表") { md = md.toggleLinePrefix(LinePrefix.BULLET) }
+                ToolButton(Icons.Outlined.FormatListNumbered, "有序列表") { md = md.toggleLinePrefix(LinePrefix.ORDERED) }
+                ToolButton(Icons.Outlined.FormatQuote, "引用") { md = md.toggleLinePrefix(LinePrefix.QUOTE) }
+                ToolButton(Icons.Outlined.Code, "行内代码") { md = md.wrapSelection("`") }
+                ToolButton(Icons.Outlined.Link, "链接") { md = md.insertLink() }
+            } else {
+                ToolButton(Icons.Outlined.FormatBold, "加粗", span.fontWeight == FontWeight.Bold) {
+                    rich.toggleSpanStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                }
+                ToolButton(Icons.Outlined.FormatItalic, "斜体", span.fontStyle == FontStyle.Italic) {
+                    rich.toggleSpanStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                }
+                ToolButton(Icons.Outlined.FormatUnderlined, "下划线", span.textDecoration?.contains(TextDecoration.Underline) == true) {
+                    rich.toggleSpanStyle(SpanStyle(textDecoration = TextDecoration.Underline))
+                }
+                ToolButton(Icons.Outlined.FormatStrikethrough, "删除线", span.textDecoration?.contains(TextDecoration.LineThrough) == true) {
+                    rich.toggleSpanStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
+                }
+                ToolButton(Icons.Outlined.FormatListBulleted, "无序列表", rich.isUnorderedList) { rich.toggleUnorderedList() }
+                ToolButton(Icons.Outlined.FormatListNumbered, "有序列表", rich.isOrderedList) { rich.toggleOrderedList() }
+                ToolButton(Icons.Outlined.Link, "链接", rich.isLink) { linkDialog = true }
             }
-            ToolButton(Icons.Outlined.FormatItalic, "斜体", span.fontStyle == FontStyle.Italic) {
-                rich.toggleSpanStyle(SpanStyle(fontStyle = FontStyle.Italic))
-            }
-            ToolButton(Icons.Outlined.FormatUnderlined, "下划线", span.textDecoration?.contains(TextDecoration.Underline) == true) {
-                rich.toggleSpanStyle(SpanStyle(textDecoration = TextDecoration.Underline))
-            }
-            ToolButton(Icons.Outlined.FormatStrikethrough, "删除线", span.textDecoration?.contains(TextDecoration.LineThrough) == true) {
-                rich.toggleSpanStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
-            }
-            ToolButton(Icons.Outlined.FormatListBulleted, "无序列表", rich.isUnorderedList) { rich.toggleUnorderedList() }
-            ToolButton(Icons.Outlined.FormatListNumbered, "有序列表", rich.isOrderedList) { rich.toggleOrderedList() }
-            ToolButton(Icons.Outlined.Link, "链接", rich.isLink) { linkDialog = true }
         }
     }
 
@@ -487,6 +552,89 @@ fun EditorScreen(screen: Screen.Editor, onClose: () -> Unit) {
             title = "放弃这条笔记?", message = "还没有发送的内容将会丢失。", confirmText = "放弃", danger = true,
             onDismiss = { confirmDiscard = false }, onConfirm = onClose,
         )
+    }
+}
+
+// ---------- Markdown 模式的编辑操作 ----------
+
+/** 替换 [start, end) 并把光标放到插入内容之后 */
+private fun TextFieldValue.replaceRange(start: Int, end: Int, insert: String, cursor: Int = start + insert.length) =
+    TextFieldValue(text.substring(0, start) + insert + text.substring(end), TextRange(cursor))
+
+/** 用 Markdown 语法包裹选中的文字, 没有选中时光标放在中间 */
+private fun TextFieldValue.wrapSelection(before: String, after: String = before): TextFieldValue {
+    val start = selection.min
+    val end = selection.max
+    val inner = text.substring(start, end)
+    return TextFieldValue(
+        text.substring(0, start) + before + inner + after + text.substring(end),
+        TextRange(start + before.length, start + before.length + inner.length),
+    )
+}
+
+private enum class LinePrefix(val pattern: Regex) {
+    BULLET(Regex("^- ")), ORDERED(Regex("^\\d+\\. ")), QUOTE(Regex("^> ?"))
+}
+
+/** 给光标所在(或选中)的每一行加上行首标记, 已经都有时去掉 */
+private fun TextFieldValue.toggleLinePrefix(kind: LinePrefix): TextFieldValue {
+    val lineStart = text.lastIndexOf('\n', selection.min - 1) + 1
+    val lineEnd = text.indexOf('\n', selection.max).let { if (it < 0) text.length else it }
+    val lines = text.substring(lineStart, lineEnd).split("\n")
+    val all = lines.all { kind.pattern.containsMatchIn(it) }
+    val next = lines.mapIndexed { i, line ->
+        val bare = line.replace(Regex("^(- |\\d+\\. |> ?)"), "")
+        when {
+            all -> bare
+            kind == LinePrefix.BULLET -> "- $bare"
+            kind == LinePrefix.ORDERED -> "${i + 1}. $bare"
+            else -> "> $bare"
+        }
+    }.joinToString("\n")
+    return replaceRange(lineStart, lineEnd, next)
+}
+
+/** 插入链接: 选中的是网址时作为链接地址, 否则作为文字, 并选中待填写的网址 */
+private fun TextFieldValue.insertLink(): TextFieldValue {
+    val start = selection.min
+    val selected = text.substring(start, selection.max)
+    if (Regex("^(https?://|www\\.)\\S+$", RegexOption.IGNORE_CASE).matches(selected)) {
+        return replaceRange(start, selection.max, "[]($selected)", start + 1)
+    }
+    val insert = "[$selected](https://)"
+    val urlAt = start + selected.length + 3
+    return TextFieldValue(text.substring(0, start) + insert + text.substring(selection.max), TextRange(urlAt, urlAt + "https://".length))
+}
+
+private val LIST_LINE = Regex("^(\\s*)([-*+]|\\d+\\.|>) (.*)$")
+
+/** 在列表/引用中换行时自动续上标记; 在空的一项上换行则结束列表 */
+private fun continueMarkdownList(old: TextFieldValue, new: TextFieldValue): TextFieldValue {
+    val at = old.selection.min
+    val inserted = old.selection.collapsed && new.text.length == old.text.length + 1 &&
+        new.text.getOrNull(at) == '\n' && new.text.removeRange(at, at + 1) == old.text
+    if (!inserted) return new
+    val lineStart = old.text.lastIndexOf('\n', at - 1) + 1
+    val match = LIST_LINE.matchEntire(old.text.substring(lineStart, at)) ?: return new
+    val (space, marker, content) = match.destructured
+    if (content.isBlank()) return old.replaceRange(lineStart, at, "")
+    val next = if (marker.endsWith(".")) "${marker.dropLast(1).toInt() + 1}." else marker
+    val insert = "\n$space$next "
+    return old.replaceRange(at, at, insert)
+}
+
+/** 切换富文本/Markdown 模式 */
+@Composable
+private fun MarkdownToggle(active: Boolean, onClick: () -> Unit) {
+    val c = Neno.colors
+    Box(
+        Modifier.height(42.dp).padding(3.dp).clip(RoundedCornerShape(10.dp))
+            .background(if (active) c.accentSoft else Color.Transparent)
+            .clickable(onClickLabel = if (active) "切换到富文本模式" else "切换到 Markdown 模式", onClick = onClick)
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("MD", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (active) c.accentText else c.ink2, letterSpacing = 0.5.sp)
     }
 }
 

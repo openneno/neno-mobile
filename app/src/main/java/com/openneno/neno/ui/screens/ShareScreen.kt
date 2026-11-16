@@ -205,7 +205,11 @@ private fun ShareCard(note: Note, template: ShareTemplate, palette: Palette, sta
     }
     val htmlColors = HtmlColors(s.accent, s.accent, Color.Transparent, s.ink2, s.line, Color.Transparent)
     val typography = NoteTypography(
-        body = TextStyle(fontSize = 16.sp, lineHeight = 1.75.em, color = s.ink),
+        body = TextStyle(
+            fontSize = 16.sp, lineHeight = 1.75.em, color = s.ink,
+            lineHeightStyle = com.openneno.neno.ui.components.NOTE_LINE_HEIGHT_STYLE,
+            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+        ),
         secondary = s.ink2, marker = s.ink2, quoteBar = s.accent.copy(alpha = 0.5f), codeBackground = s.line,
     )
 
