@@ -57,6 +57,24 @@ class Settings(context: Context) {
         _editorMarkdown.value = value
     }
 
+    /** 检查更新: 启动时自动检查(每天最多一次) */
+    private val _autoCheckUpdate = MutableStateFlow(prefs.getBoolean("update_auto_check", true))
+    val autoCheckUpdate: StateFlow<Boolean> = _autoCheckUpdate.asStateFlow()
+
+    fun setAutoCheckUpdate(value: Boolean) {
+        prefs.edit { putBoolean("update_auto_check", value) }
+        _autoCheckUpdate.value = value
+    }
+
+    var lastUpdateCheck: Long
+        get() = prefs.getLong("update_last_check", 0L)
+        set(value) = prefs.edit { putLong("update_last_check", value) }
+
+    /** 用户选择"忽略此版本"的版本号, 自动检查时不再提示 */
+    var ignoredUpdateVersion: String
+        get() = prefs.getString("update_ignored", "")!!
+        set(value) = prefs.edit { putString("update_ignored", value) }
+
     private fun loadGithub() = GithubConfig(
         token = prefs.getString("gh_token", "")!!,
         owner = prefs.getString("gh_owner", "")!!,

@@ -23,7 +23,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) handleIntent(intent)
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+            com.openneno.neno.update.Updater.autoCheck(this, app.settings)
+        }
         setContent {
             val appearance by app.settings.appearance.collectAsStateWithLifecycle()
             val dark = isDark(appearance)

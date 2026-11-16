@@ -88,6 +88,9 @@ import com.openneno.neno.sync.GithubAccount
 import com.openneno.neno.sync.GithubRepo
 import com.openneno.neno.ui.components.ConfirmDialog
 import com.openneno.neno.ui.components.NenoCard
+import com.openneno.neno.ui.components.UpdateStatusText
+import com.openneno.neno.update.UpdateState
+import com.openneno.neno.update.Updater
 import com.openneno.neno.ui.components.copyText
 import com.openneno.neno.ui.components.repository
 import com.openneno.neno.ui.theme.Neno
@@ -647,9 +650,24 @@ private fun DataSettings() {
 private fun About() {
     val c = Neno.colors
     val context = LocalContext.current
+    val settings = context.app.settings
+    val autoCheck by settings.autoCheckUpdate.collectAsStateWithLifecycle()
+    val update by Updater.state.collectAsStateWithLifecycle()
     Text("NENO for Android ${BuildConfig.VERSION_NAME}", fontSize = 14.sp)
     Text("开源的卡片笔记应用, 与网页端共用同一个 GitHub 笔记仓库。", fontSize = 13.sp, color = c.ink3)
-    Spacer(Modifier.height(6.dp))
+    Spacer(Modifier.height(10.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(
+            enabled = update != UpdateState.Checking && update !is UpdateState.Downloading,
+            onClick = { Updater.check(context, settings) },
+        ) { Text("检查更新") }
+        Spacer(Modifier.width(8.dp))
+        UpdateStatusText(onOpen = { Updater.showPrompt() })
+    }
+    Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("启动时自动检查更新", Modifier.weight(1f), fontSize = 14.sp)
+        Switch(autoCheck, { settings.setAutoCheckUpdate(it) }, colors = SwitchDefaults.colors(checkedTrackColor = c.accent))
+    }
     Row {
         TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/openneno/neno-mobile"))) }) { Text("GitHub") }
         TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(AccountApi.WEB_URL))) }) { Text("网页版") }

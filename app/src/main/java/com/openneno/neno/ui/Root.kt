@@ -110,6 +110,7 @@ fun NenoRoot(state: AppState, onExit: () -> Unit) {
             ) {
                 com.openneno.neno.ui.screens.QuickVoiceSheet(onClose = { state.quickVoice = false })
             }
+            com.openneno.neno.ui.components.UpdateDialog()
         }
     }
 }
